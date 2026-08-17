@@ -1,0 +1,19 @@
+default_platform :android
+
+platform :android do
+  desc "Build release APK and upload to Sauce Labs storage (repo-level)"
+  lane :upload_to_saucelabs do
+    sh("cd android && ./gradlew clean assembleRelease -Pci=true")
+
+    apk_path = "android/app/build/outputs/apk/release/app-release.apk"
+    unless File.exist?(apk_path)
+      UI.user_error!("APK not found at #{apk_path}. Build may have failed.")
+    end
+
+    UI.message("Uploading #{apk_path} to Sauce Labs storage as myapp.apk")
+
+    sh("curl -u #{ENV['SAUCE_USERNAME']}:#{ENV['SAUCE_ACCESS_KEY']} -X POST https://api.us-west-1.saucelabs.com/v1/storage/upload?overwrite=true -F file=@#{apk_path} -F name=myapp.apk")
+
+    UI.message("Upload complete (repo-level Fastfile)")
+  end
+end
