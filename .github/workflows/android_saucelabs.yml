@@ -126,9 +126,36 @@ jobs:
         with:
           ruby-version: '3.2'
 
-      - name: Install fastlane
+      - name: Install bundler and gems (fastlane)
         run: |
-          gem install fastlane -NV
+          gem install bundler -NV || true
+          bundle install --jobs=4 --retry=3
+
+      - name: Ensure `android/` exists before running Fastlane
+        run: |
+          echo "Checking android/ before Fastlane"
+          if [ -d android ]; then
+            echo "android/ exists"
+            ls -la android | sed -n '1,200p'
+          else
+            echo "android/ missing — attempting to generate now"
+            rm -rf tmp || true
+            if npx react-native init tmp --version 0.71.8 --verbose; then
+              if [ -d tmp/android ]; then
+                rm -rf android || true
+                mv tmp/android ./android
+                echo "Generated and moved android/"
+                ls -la android | sed -n '1,200p'
+              else
+                echo "tmp/android missing after init; tmp contents:" && ls -la tmp || true
+                exit 1
+              fi
+            else
+              echo "react-native init failed; listing workspace:" && ls -la
+              exit 1
+            fi
+            rm -rf tmp || true
+          fi
 
       - name: Run Fastlane lane (build + upload)
         env:
@@ -141,7 +168,7 @@ jobs:
           FASTLANE_FASTFILE: ${{ github.workspace }}/android/fastlane/Fastfile
         run: |
           # Run fastlane from repo root and point to Fastfile via FASTLANE_FASTFILE env var
-          fastlane android upload_to_saucelabs --verbose
+          bundle exec fastlane android upload_to_saucelabs --verbose
       
 
       - name: Upload APK to Sauce Labs
