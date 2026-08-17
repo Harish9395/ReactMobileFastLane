@@ -4,7 +4,10 @@ platform :android do
   desc "Build release APK and upload to Sauce Labs"
 
   lane :upload_to_saucelabs do
-    android_dir = File.expand_path("..", __dir__)
+    android_dir = File.expand_path("../..", __dir__)
+
+    gradlew_path = File.join(android_dir, "gradlew")
+
     apk_path = File.join(
       android_dir,
       "app",
@@ -15,13 +18,14 @@ platform :android do
       "app-release.apk"
     )
 
+    UI.message("Fastfile directory: #{__dir__}")
     UI.message("Android project: #{android_dir}")
-    UI.message("Gradle wrapper: #{File.join(android_dir, 'gradlew')}")
+    UI.message("Gradle wrapper: #{gradlew_path}")
     UI.message("APK path: #{apk_path}")
 
-    unless File.exist?(File.join(android_dir, "gradlew"))
+    unless File.exist?(gradlew_path)
       UI.user_error!(
-        "gradlew not found at #{File.join(android_dir, 'gradlew')}"
+        "gradlew not found at #{gradlew_path}"
       )
     end
 
@@ -42,9 +46,10 @@ platform :android do
 
     UI.success("APK built successfully: #{apk_path}")
 
-    # Upload to Sauce Labs
     unless ENV["SAUCE_USERNAME"] && ENV["SAUCE_ACCESS_KEY"]
-      UI.user_error!("SAUCE_USERNAME and SAUCE_ACCESS_KEY must be configured")
+      UI.user_error!(
+        "SAUCE_USERNAME and SAUCE_ACCESS_KEY must be configured"
+      )
     end
 
     sh(
@@ -65,8 +70,9 @@ platform :android do
   end
 
   desc "Build release APK"
+
   lane :apk do
-    android_dir = File.expand_path("..", __dir__)
+    android_dir = File.expand_path("../..", __dir__)
 
     gradle(
       project_dir: android_dir,
