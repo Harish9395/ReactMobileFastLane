@@ -39,7 +39,8 @@ jobs:
           RETRIES=3
           for i in $(seq 1 $RETRIES); do
             echo "Attempt $i: creating temporary react-native app"
-            if npx react-native init tmp --version 0.71.8 --template react-native-template-bare-minimum --verbose; then
+            # Use template@version (don't pass both --version and --template)
+            if npx react-native init tmp --template react-native-template-bare-minimum@0.71.8 --verbose; then
               echo "init succeeded"
               break
             else
