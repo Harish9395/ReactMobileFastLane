@@ -1,33 +1,61 @@
-const { remote } = require('webdriverio');
+const { remote } = require("webdriverio");
 
-(async () => {
-  const username = process.env.SAUCE_USERNAME;
-  const accessKey = process.env.SAUCE_ACCESS_KEY;
-  if (!username || !accessKey) {
-    console.error('Set SAUCE_USERNAME and SAUCE_ACCESS_KEY environment variables');
-    process.exit(1);
-  }
+describe("Android application", () => {
+  let driver;
 
-  const opts = {
-    protocol: 'https',
-    hostname: 'ondemand.saucelabs.com',
-    port: 443,
-    path: '/wd/hub',
-    user: username,
-    key: accessKey,
-    capabilities: {
-      platformName: 'Android',
-      deviceName: 'Android GoogleAPI Emulator',
-      automationName: 'UiAutomator2',
-      app: 'sauce-storage:myapp.apk',
-      appWaitActivity: '*',
-      autoGrantPermissions: true
+  before(async () => {
+
+    driver = await remote({
+      protocol: "https",
+      hostname: "ondemand.eu-central-1.saucelabs.com",
+      port: 443,
+
+      path: "/wd/hub",
+
+      user: process.env.SAUCE_USERNAME,
+      key: process.env.SAUCE_ACCESS_KEY,
+
+      capabilities: {
+        platformName: "Android",
+
+        "appium:deviceName": "Android GoogleAPI Emulator",
+
+        "appium:platformVersion": "12.0",
+
+        "appium:automationName": "UiAutomator2",
+
+        "appium:app": process.env.SAUCE_APP,
+
+        "sauce:options": {
+          build: `GitHub Actions ${process.env.GITHUB_RUN_NUMBER}`,
+          name: "Android automated test",
+          appiumVersion: "stable"
+        }
+      }
+    });
+
+  });
+
+
+  it("should launch the application", async () => {
+
+    console.log("Application launched successfully");
+
+    await driver.pause(5000);
+
+    // Add your actual application assertions here.
+
+    expect(driver).toBeDefined();
+
+  });
+
+
+  after(async () => {
+
+    if (driver) {
+      await driver.deleteSession();
     }
-  };
 
-  const client = await remote(opts);
-  console.log('Session started on Sauce Labs. Pausing 5s...');
-  await client.pause(5000);
-  await client.deleteSession();
-  console.log('Session finished');
-})().catch(err => { console.error(err); process.exit(1); });
+  });
+
+});
