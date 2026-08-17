@@ -74,15 +74,30 @@ jobs:
           echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> $GITHUB_ENV
           echo "ANDROID_HOME=$SDK_ROOT" >> $GITHUB_ENV
           export PATH="$SDK_ROOT/cmdline-tools/latest/bin:$PATH"
-          yes | $SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --sdk_root=$SDK_ROOT "platform-tools" "platforms;android-33" "build-tools;33.0.0"
+          # Accept licenses non-interactively first
+          yes | $SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --sdk_root=$SDK_ROOT --licenses || true
+          # Install required packages (do not pipe yes into install to avoid broken pipe)
+          $SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --sdk_root=$SDK_ROOT "platform-tools" "platforms;android-33" "build-tools;33.0.0"
 
       - name: Make gradlew executable
         run: chmod +x android/gradlew || true
 
-      - name: Build Android release (Gradle)
-        working-directory: android
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+
+      - name: Install fastlane
         run: |
-          ./gradlew clean assembleRelease -Pci=true
+          gem install fastlane -NV
+
+      - name: Run Fastlane lane (build + upload)
+        working-directory: android
+        env:
+          SAUCE_USERNAME: ${{ secrets.SAUCE_USERNAME }}
+          SAUCE_ACCESS_KEY: ${{ secrets.SAUCE_ACCESS_KEY }}
+        run: |
+          fastlane android upload_to_saucelabs
 
       - name: Upload APK to Sauce Labs
         if: success()
