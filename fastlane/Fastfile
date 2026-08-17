@@ -1,19 +1,72 @@
-default_platform :android
+default_platform(:android)
 
 platform :android do
-  desc "Build release APK and upload to Sauce Labs storage (repo-level)"
-  lane :upload_to_saucelabs do
-    sh("cd android && ./gradlew clean assembleRelease -Pci=true")
+  desc "Build release APK and upload to Sauce Labs"
 
-    apk_path = "android/app/build/outputs/apk/release/app-release.apk"
+  lane :upload_to_saucelabs do
+    # Fastlane is already running from the android directory.
+    gradle(
+      task: "clean",
+      flags: "-Pci=true"
+    )
+
+    gradle(
+      task: "assembleRelease",
+      flags: "-Pci=true"
+    )
+
+    apk_path = "app/build/outputs/apk/release/app-release.apk"
+
     unless File.exist?(apk_path)
-      UI.user_error!("APK not found at #{apk_path}. Build may have failed.")
+      UI.user_error!("APK not found: #{apk_path}")
     end
 
-    UI.message("Uploading #{apk_path} to Sauce Labs storage as myapp.apk")
+    UI.success("APK built successfully: #{apk_path}")
 
-    sh("curl -u #{ENV['SAUCE_USERNAME']}:#{ENV['SAUCE_ACCESS_KEY']} -X POST https://api.us-west-1.saucelabs.com/v1/storage/upload?overwrite=true -F file=@#{apk_path} -F name=myapp.apk")
+    username = ENV["SAUCE_USERNAME"]
+    access_key = ENV["SAUCE_ACCESS_KEY"]
 
-    UI.message("Upload complete (repo-level Fastfile)")
+    if username.to_s.empty? || access_key.to_s.empty?
+      UI.user_error!("SAUCE_USERNAME and SAUCE_ACCESS_KEY must be configured")
+    end
+
+    sauce_region = ENV.fetch("SAUCE_REGION", "eu-central-1")
+
+    upload_url =
+      "https://api.#{sauce_region}.saucelabs.com/v1/storage/upload?overwrite=true"
+
+    sh(
+      "curl",
+      "-f",
+      "-sS",
+      "-u",
+      "#{username}:#{access_key}",
+      "-X",
+      "POST",
+      upload_url,
+      "-F",
+      "file=@#{apk_path}",
+      "-F",
+      "name=myapp.apk"
+    )
+
+    UI.success("APK uploaded to Sauce Labs successfully")
+  end
+
+  desc "Build release APK"
+
+  lane :apk do
+    gradle(
+      task: "assembleRelease",
+      flags: "-Pci=true"
+    )
+
+    apk_path = "app/build/outputs/apk/release/app-release.apk"
+
+    unless File.exist?(apk_path)
+      UI.user_error!("APK not found: #{apk_path}")
+    end
+
+    UI.success("APK built successfully: #{apk_path}")
   end
 end
