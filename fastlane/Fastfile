@@ -4,69 +4,79 @@ platform :android do
   desc "Build release APK and upload to Sauce Labs"
 
   lane :upload_to_saucelabs do
-    # Fastlane is already running from the android directory.
+    android_dir = File.expand_path("..", __dir__)
+    apk_path = File.join(
+      android_dir,
+      "app",
+      "build",
+      "outputs",
+      "apk",
+      "release",
+      "app-release.apk"
+    )
+
+    UI.message("Android project: #{android_dir}")
+    UI.message("Gradle wrapper: #{File.join(android_dir, 'gradlew')}")
+    UI.message("APK path: #{apk_path}")
+
+    unless File.exist?(File.join(android_dir, "gradlew"))
+      UI.user_error!(
+        "gradlew not found at #{File.join(android_dir, 'gradlew')}"
+      )
+    end
+
     gradle(
-      task: "clean",
-      flags: "-Pci=true"
+      project_dir: android_dir,
+      task: "clean"
     )
 
     gradle(
+      project_dir: android_dir,
       task: "assembleRelease",
       flags: "-Pci=true"
     )
 
-    apk_path = "app/build/outputs/apk/release/app-release.apk"
-
     unless File.exist?(apk_path)
-      UI.user_error!("APK not found: #{apk_path}")
+      UI.user_error!("APK was not created: #{apk_path}")
     end
 
     UI.success("APK built successfully: #{apk_path}")
 
-    username = ENV["SAUCE_USERNAME"]
-    access_key = ENV["SAUCE_ACCESS_KEY"]
-
-    if username.to_s.empty? || access_key.to_s.empty?
+    # Upload to Sauce Labs
+    unless ENV["SAUCE_USERNAME"] && ENV["SAUCE_ACCESS_KEY"]
       UI.user_error!("SAUCE_USERNAME and SAUCE_ACCESS_KEY must be configured")
     end
-
-    sauce_region = ENV.fetch("SAUCE_REGION", "eu-central-1")
-
-    upload_url =
-      "https://api.#{sauce_region}.saucelabs.com/v1/storage/upload?overwrite=true"
 
     sh(
       "curl",
       "-f",
-      "-sS",
       "-u",
-      "#{username}:#{access_key}",
+      "#{ENV['SAUCE_USERNAME']}:#{ENV['SAUCE_ACCESS_KEY']}",
       "-X",
       "POST",
-      upload_url,
+      "https://api.eu-central-1.saucelabs.com/v1/storage/upload?overwrite=true",
       "-F",
       "file=@#{apk_path}",
       "-F",
       "name=myapp.apk"
     )
 
-    UI.success("APK uploaded to Sauce Labs successfully")
+    UI.success("APK uploaded to Sauce Labs")
   end
 
   desc "Build release APK"
-
   lane :apk do
+    android_dir = File.expand_path("..", __dir__)
+
     gradle(
+      project_dir: android_dir,
+      task: "clean"
+    )
+
+    gradle(
+      project_dir: android_dir,
       task: "assembleRelease",
       flags: "-Pci=true"
     )
-
-    apk_path = "app/build/outputs/apk/release/app-release.apk"
-
-    unless File.exist?(apk_path)
-      UI.user_error!("APK not found: #{apk_path}")
-    end
-
-    UI.success("APK built successfully: #{apk_path}")
   end
 end
