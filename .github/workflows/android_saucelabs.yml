@@ -1,183 +1,196 @@
 name: Build Android and Upload to Sauce Labs
 
 on:
-  push:
-    branches: [ main, master ]
-  workflow_dispatch: {}
+  # push:
+  #   branches:
+  #     - main
+  #     - master
+  workflow_dispatch:
 
 jobs:
   build-and-upload:
     runs-on: ubuntu-latest
+
     env:
       SAUCE_USERNAME: ${{ secrets.SAUCE_USERNAME }}
       SAUCE_ACCESS_KEY: ${{ secrets.SAUCE_ACCESS_KEY }}
 
     steps:
+      # --------------------------------------------------
+      # 1. Checkout repository
+      # --------------------------------------------------
       - name: Checkout
         uses: actions/checkout@v4
 
+      # --------------------------------------------------
+      # 2. Node.js
+      # --------------------------------------------------
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '20'
+          cache: npm
 
+      # --------------------------------------------------
+      # 3. Install React Native dependencies
+      # --------------------------------------------------
       - name: Install npm dependencies
-        run: |
-          if [ -f package-lock.json ]; then
-            npm ci
-          else
-            npm install
-          fi
+        run: npm install
 
-      # Skipping web build for React Native project (no `build` script)
-
-      - name: Prepare React Native native projects (retry + debug)
+      # --------------------------------------------------
+      # 4. Generate Android native project
+      # --------------------------------------------------
+      - name: Generate Android project
+        shell: bash
         run: |
           set -e
-          echo "npx version:" && npx --version || true
-          # Retry init a few times to avoid transient network failures
-          RETRIES=3
-          for i in $(seq 1 $RETRIES); do
-            echo "Attempt $i: creating temporary react-native app"
-            rm -rf tmp || true
-            # Use only --version (avoid template resolution issues)
-            if npx react-native init tmp --version 0.71.8 --verbose; then
-              echo "init succeeded"
-              break
-            else
-              echo "init failed on attempt $i"
-              if [ "$i" -lt "$RETRIES" ]; then sleep $((i*2)); fi
-            fi
-          done
 
-          if [ ! -d tmp ]; then
-            echo "tmp directory not created. Listing workspace for debugging:" && ls -la
-            exit 1
-          fi
+          echo "Creating temporary React Native project..."
 
-          if [ -d tmp/android ]; then
-            rm -rf android || true
-            mv tmp/android ./android
-            echo "Moved tmp/android -> ./android"
-            ls -la android || true
-            # Restore fastlane config from the repo (in case android was replaced)
-            if [ -f android/fastlane/Fastfile ]; then
-              echo "fastlane already present in android/fastlane"
-            else
-              echo "Restoring android/fastlane from repository"
-              git checkout -- android/fastlane || true
-            fi
-            ls -la android/fastlane || true
-          else
-            echo "tmp/android missing. tmp contents:" && ls -la tmp
-            exit 1
-          fi
+          rm -rf tmp
 
-          if [ -d tmp/ios ]; then
-            rm -rf ios || true
-            mv tmp/ios ./ios
-            echo "Moved tmp/ios -> ./ios"
-            ls -la ios || true
-          else
-            echo "tmp/ios missing (iOS not required on Linux). tmp contents:" && ls -la tmp || true
-          fi
+          npx react-native init tmp --version 0.71.8 --verbose
 
-          rm -rf tmp || true
+          echo "Checking generated Android project..."
 
+          test -d tmp/android
+          test -f tmp/android/gradlew
+
+          echo "Replacing android directory..."
+
+          rm -rf android
+          mv tmp/android android
+
+          rm -rf tmp
+
+          echo "Android project created successfully."
+
+          ls -la android
+
+      # --------------------------------------------------
+      # 5. Put our Fastfile inside Android project
+      # --------------------------------------------------
+      - name: Prepare Fastlane
+        shell: bash
+        run: |
+          set -e
+
+          echo "Checking repository Fastfile..."
+
+          test -f fastlane/Fastfile
+
+          echo "Creating android/fastlane..."
+
+          mkdir -p android/fastlane
+
+          cp fastlane/Fastfile android/fastlane/Fastfile
+
+          echo "Fastfile copied successfully."
+
+          ls -la android/fastlane
+
+      # --------------------------------------------------
+      # 6. Setup Java
+      # --------------------------------------------------
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
-          distribution: 'temurin'
+          distribution: temurin
           java-version: '17'
 
-      - name: Install Android SDK commandline tools and packages
+      # --------------------------------------------------
+      # 7. Setup Android SDK
+      # --------------------------------------------------
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      # --------------------------------------------------
+      # 8. Install Android SDK packages
+      # --------------------------------------------------
+      - name: Install Android SDK packages
         run: |
-          set -e
-          SDK_ROOT="/usr/local/android-sdk"
-          sudo mkdir -p $SDK_ROOT
-          curl -sS -o /tmp/commandlinetools.zip https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip
-          sudo unzip -q /tmp/commandlinetools.zip -d $SDK_ROOT/cmdline-tools
-          sudo mkdir -p $SDK_ROOT/cmdline-tools/latest
-          # If unzip created a nested cmdline-tools folder, move its contents into latest
-          if [ -d "$SDK_ROOT/cmdline-tools/cmdline-tools" ]; then
-            sudo mv "$SDK_ROOT/cmdline-tools/cmdline-tools"/* "$SDK_ROOT/cmdline-tools/latest/"
-          else
-            # Move all entries except the newly-created 'latest' into latest
-            for entry in "$SDK_ROOT/cmdline-tools"/*; do
-              if [ "$entry" = "$SDK_ROOT/cmdline-tools/latest" ]; then
-                continue
-              fi
-              sudo mv "$entry" "$SDK_ROOT/cmdline-tools/latest/"
-            done
-          fi
-          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> $GITHUB_ENV
-          echo "ANDROID_HOME=$SDK_ROOT" >> $GITHUB_ENV
-          export PATH="$SDK_ROOT/cmdline-tools/latest/bin:$PATH"
-          # Accept licenses non-interactively first
-          yes | $SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --sdk_root=$SDK_ROOT --licenses || true
-          # Install required packages (do not pipe yes into install to avoid broken pipe)
-          $SDK_ROOT/cmdline-tools/latest/bin/sdkmanager --sdk_root=$SDK_ROOT "platform-tools" "platforms;android-33" "build-tools;33.0.0"
+          sdkmanager "platform-tools"
+          sdkmanager "platforms;android-33"
+          sdkmanager "build-tools;33.0.0"
 
-      - name: Make gradlew executable
-        run: chmod +x android/gradlew || true
+      # --------------------------------------------------
+      # 9. Make Gradle executable
+      # --------------------------------------------------
+      - name: Make Gradle executable
+        run: chmod +x android/gradlew
 
+      # --------------------------------------------------
+      # 10. Setup Ruby
+      # --------------------------------------------------
       - name: Setup Ruby
         uses: ruby/setup-ruby@v1
         with:
-          ruby-version: '3.2'
+          ruby-version: '3.3'
+          bundler-cache: true
 
-      - name: Install bundler and gems (fastlane)
+      # --------------------------------------------------
+      # 11. Install Ruby dependencies
+      # --------------------------------------------------
+      - name: Install Ruby dependencies
         run: |
-          gem install bundler -NV || true
-          bundle install --jobs=4 --retry=3
+          bundle install --jobs 4 --retry 3
 
-      - name: Ensure `android/` exists before running Fastlane
+      # --------------------------------------------------
+      # 12. Verify Android project
+      # --------------------------------------------------
+      - name: Verify Android project
         run: |
-          echo "Checking android/ before Fastlane"
-          if [ -d android ]; then
-            echo "android/ exists"
-            ls -la android | sed -n '1,200p'
-          else
-            echo "android/ missing — attempting to generate now"
-            rm -rf tmp || true
-            if npx react-native init tmp --version 0.71.8 --verbose; then
-              if [ -d tmp/android ]; then
-                rm -rf android || true
-                mv tmp/android ./android
-                echo "Generated and moved android/"
-                ls -la android | sed -n '1,200p'
-              else
-                echo "tmp/android missing after init; tmp contents:" && ls -la tmp || true
-                exit 1
-              fi
-            else
-              echo "react-native init failed; listing workspace:" && ls -la
-              exit 1
-            fi
-            rm -rf tmp || true
-          fi
+          set -e
 
-      - name: Run Fastlane lane (build + upload)
+          echo "Current directory:"
+          pwd
+
+          echo ""
+          echo "Android directory:"
+          ls -la android
+
+          echo ""
+          echo "Gradle wrapper:"
+          ls -l android/gradlew
+
+          echo ""
+          echo "Fastlane:"
+          ls -la android/fastlane
+
+          test -f android/gradlew
+          test -f android/fastlane/Fastfile
+
+      # --------------------------------------------------
+      # 13. Build APK + upload to Sauce Labs
+      # --------------------------------------------------
+      - name: Build and upload APK with Fastlane
+        working-directory: android
         env:
           SAUCE_USERNAME: ${{ secrets.SAUCE_USERNAME }}
           SAUCE_ACCESS_KEY: ${{ secrets.SAUCE_ACCESS_KEY }}
           FASTLANE_OPT_OUT_USAGE: '1'
           FASTLANE_DISABLE_COLORS: '1'
           FASTLANE_SKIP_UPDATE_CHECK: '1'
+          FASTLANE_HIDE_GITHUB_ISSUES: '1'
           CI: 'true'
-          FASTLANE_FASTFILE: ${{ github.workspace }}/android/fastlane/Fastfile
         run: |
-          # Run fastlane from repo root and point to Fastfile via FASTLANE_FASTFILE env var
+          set -e
+
+          echo "Running Fastlane from:"
+          pwd
+
+          echo ""
+          echo "Fastfile:"
+          ls -l fastlane/Fastfile
+
+          echo ""
+          echo "Running lane..."
+
           bundle exec fastlane android upload_to_saucelabs --verbose
-      
 
-      - name: Upload APK to Sauce Labs
-        if: success()
-        run: |
-          APK_PATH=android/app/build/outputs/apk/release/app-release.apk
-          if [ ! -f "$APK_PATH" ]; then echo "APK not found: $APK_PATH"; exit 1; fi
-          curl -u $SAUCE_USERNAME:$SAUCE_ACCESS_KEY -X POST https://api.eu-central-1.saucelabs.com/v1/storage/upload?overwrite=true -F file=@$APK_PATH -F name=myapp.apk
-
+      # --------------------------------------------------
+      # 14. Upload APK as GitHub artifact
+      # --------------------------------------------------
       - name: Upload APK artifact
         if: success()
         uses: actions/upload-artifact@v4
