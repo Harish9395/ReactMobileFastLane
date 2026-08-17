@@ -1,12 +1,53 @@
 default_platform(:android)
 
 platform :android do
-  desc "Build release APK and upload to Sauce Labs"
 
-  lane :upload_to_saucelabs do
+  desc "Build release APK"
+  lane :apk do
     android_dir = File.expand_path("..", __dir__)
 
-    gradlew_path = File.join(android_dir, "gradlew")
+    UI.message("========================================")
+    UI.message("ANDROID BUILD")
+    UI.message("========================================")
+    UI.message("Android directory: #{android_dir}")
+
+    gradle(
+      project_dir: android_dir,
+      task: "clean"
+    )
+
+    gradle(
+      project_dir: android_dir,
+      task: "assembleRelease",
+      flags: "-Pci=true"
+    )
+
+    apk_path = File.join(
+      android_dir,
+      "app",
+      "build",
+      "outputs",
+      "apk",
+      "release",
+      "app-release.apk"
+    )
+
+    unless File.exist?(apk_path)
+      UI.user_error!("APK was not created: #{apk_path}")
+    end
+
+    UI.success("APK created successfully")
+    UI.message("APK: #{apk_path}")
+    UI.message("APK size: #{File.size(apk_path)} bytes")
+
+    apk_path
+  end
+
+
+  desc "Build APK and upload it to Sauce Labs App Storage"
+  lane :upload_to_saucelabs do
+
+    android_dir = File.expand_path("..", __dir__)
 
     apk_path = File.join(
       android_dir,
@@ -21,22 +62,21 @@ platform :android do
     sauce_username = ENV["SAUCE_USERNAME"]
     sauce_access_key = ENV["SAUCE_ACCESS_KEY"]
 
-    UI.message("========================================")
-    UI.message("Android project: #{android_dir}")
-    UI.message("APK path: #{apk_path}")
-    UI.message("========================================")
-
-    # ---------------------------------------------
-    # Validate Gradle
-    # ---------------------------------------------
-
-    unless File.exist?(gradlew_path)
-      UI.user_error!("gradlew not found: #{gradlew_path}")
+    if sauce_username.to_s.empty?
+      UI.user_error!("SAUCE_USERNAME is not configured")
     end
 
-    # ---------------------------------------------
-    # Build APK
-    # ---------------------------------------------
+    if sauce_access_key.to_s.empty?
+      UI.user_error!("SAUCE_ACCESS_KEY is not configured")
+    end
+
+    # --------------------------------------------------
+    # BUILD APK
+    # --------------------------------------------------
+
+    UI.message("========================================")
+    UI.message("BUILDING RELEASE APK")
+    UI.message("========================================")
 
     gradle(
       project_dir: android_dir,
@@ -49,144 +89,154 @@ platform :android do
       flags: "-Pci=true"
     )
 
-    # ---------------------------------------------
-    # Validate APK
-    # ---------------------------------------------
-
     unless File.exist?(apk_path)
       UI.user_error!("APK was not created: #{apk_path}")
     end
 
-    apk_size = File.size(apk_path)
+    UI.success("APK BUILD SUCCESSFUL")
+    UI.message("APK path: #{apk_path}")
+    UI.message("APK size: #{File.size(apk_path)} bytes")
 
-    UI.success("APK built successfully")
-    UI.message("APK: #{apk_path}")
-    UI.message("APK size: #{apk_size} bytes")
 
-    # ---------------------------------------------
-    # Validate Sauce credentials
-    # ---------------------------------------------
+    # --------------------------------------------------
+    # SAUCE LABS CONFIG
+    # --------------------------------------------------
 
-    if sauce_username.to_s.empty?
-      UI.user_error!("SAUCE_USERNAME is missing")
-    end
+    sauce_region = ENV.fetch(
+      "SAUCE_REGION",
+      "eu-central-1"
+    )
 
-    if sauce_access_key.to_s.empty?
-      UI.user_error!("SAUCE_ACCESS_KEY is missing")
-    end
+    sauce_api_url =
+      "https://api.#{sauce_region}.saucelabs.com/v1/storage/upload"
 
-    # ---------------------------------------------
-    # Sauce Labs upload
-    # ---------------------------------------------
-
-    sauce_url =
-      "https://api.eu-central-1.saucelabs.com/v1/storage/upload"
+    # Use a unique filename so that every CI build is easy to identify.
+    sauce_file_name =
+      ENV.fetch(
+        "SAUCE_APP_NAME",
+        "myapp-#{ENV.fetch('GITHUB_RUN_NUMBER', Time.now.to_i)}.apk"
+      )
 
     UI.message("========================================")
-    UI.message("Uploading APK to Sauce Labs")
-    UI.message("Endpoint: #{sauce_url}")
-    UI.message("Filename: myapp.apk")
+    UI.message("SAUCE LABS UPLOAD")
     UI.message("========================================")
+    UI.message("Region: #{sauce_region}")
+    UI.message("API: #{sauce_api_url}")
+    UI.message("File name: #{sauce_file_name}")
+
+
+    # --------------------------------------------------
+    # UPLOAD
+    # --------------------------------------------------
 
     response_file = File.join(
       Dir.tmpdir,
       "sauce_upload_response.json"
     )
 
-    sh(
+    command = [
       "curl",
+      "--fail-with-body",
       "--silent",
       "--show-error",
-      "--fail-with-body",
       "--location",
-      "--user",
-      "#{sauce_username}:#{sauce_access_key}",
-      "--request",
-      "POST",
-      sauce_url,
-      "--output",
-      response_file,
-      "--write-out",
-      "%{http_code}",
-      "--form",
-      "payload=@#{apk_path}",
-      "--form",
-      "name=myapp.apk"
-    )
+      "--user", "#{sauce_username}:#{sauce_access_key}",
+      "--request", "POST",
+      sauce_api_url,
+      "--form", "payload=@#{apk_path}",
+      "--form", "name=#{sauce_file_name}",
+      "--form", "description=GitHub Actions Android release build",
+      "--form", "project_name=Android CI",
+      "--output", response_file
+    ]
+
+    sh(*command)
+
+    unless File.exist?(response_file)
+      UI.user_error!(
+        "Sauce Labs upload response was not created"
+      )
+    end
 
     response = File.read(response_file)
 
     UI.message("========================================")
-    UI.message("Sauce Labs upload response")
+    UI.message("SAUCE LABS RESPONSE")
     UI.message("========================================")
+
     UI.message(response)
 
-    # ---------------------------------------------
-    # Verify upload
-    # ---------------------------------------------
 
-    verify_url =
-      "https://api.eu-central-1.saucelabs.com/v1/storage/files?name=myapp.apk"
+    # --------------------------------------------------
+    # PARSE RESPONSE
+    # --------------------------------------------------
 
-    verify_file = File.join(
-      Dir.tmpdir,
-      "sauce_verify_response.json"
-    )
-
-    UI.message("========================================")
-    UI.message("Verifying file in Sauce Storage")
-    UI.message("========================================")
-
-    sh(
-      "curl",
-      "--silent",
-      "--show-error",
-      "--fail",
-      "--location",
-      "--user",
-      "#{sauce_username}:#{sauce_access_key}",
-      "--request",
-      "GET",
-      verify_url,
-      "--output",
-      verify_file
-    )
-
-    verify_response = File.read(verify_file)
-
-    UI.message("========================================")
-    UI.message("Sauce Storage verification")
-    UI.message("========================================")
-    UI.message(verify_response)
-
-    unless verify_response.include?("myapp.apk")
+    begin
+      json = JSON.parse(response)
+    rescue JSON::ParserError => e
       UI.user_error!(
-        "Upload request completed, but myapp.apk was not found in Sauce Storage."
+        "Sauce Labs returned invalid JSON: #{e.message}"
       )
     end
 
+    file_id =
+      json["id"] ||
+      json["file_id"] ||
+      json.dig("item", "id")
+
+    if file_id.to_s.empty?
+      UI.user_error!(
+        "Upload request completed but Sauce Labs did not return a file ID."
+      )
+    end
+
+
+    # --------------------------------------------------
+    # OUTPUTS FOR GITHUB ACTIONS
+    # --------------------------------------------------
+
+    storage_reference = "storage:#{file_id}"
+
+    filename_reference = "storage:filename=#{sauce_file_name}"
+
     UI.success("========================================")
-    UI.success("APK successfully uploaded to Sauce Labs")
-    UI.success("Filename: myapp.apk")
+    UI.success("SAUCE LABS UPLOAD SUCCESSFUL")
     UI.success("========================================")
-  end
 
-  desc "Build release APK"
+    UI.message("File ID:")
+    UI.message(file_id)
 
-  lane :apk do
-    android_dir = File.expand_path("..", __dir__)
+    UI.message("Filename:")
+    UI.message(sauce_file_name)
 
-    gradle(
-      project_dir: android_dir,
-      task: "clean"
+    UI.message("App Storage ID:")
+    UI.message(storage_reference)
+
+    UI.message("Filename reference:")
+    UI.message(filename_reference)
+
+
+    # GitHub Actions output
+    if ENV["GITHUB_OUTPUT"]
+      File.open(ENV["GITHUB_OUTPUT"], "a") do |f|
+        f.puts("sauce_file_id=#{file_id}")
+        f.puts("sauce_filename=#{sauce_file_name}")
+        f.puts("sauce_app=storage:#{file_id}")
+      end
+    end
+
+    # Also create a file that the next workflow step can read
+    File.write(
+      File.join(android_dir, "sauce-app-id.txt"),
+      storage_reference
     )
 
-    gradle(
-      project_dir: android_dir,
-      task: "assembleRelease",
-      flags: "-Pci=true"
+    File.write(
+      File.join(android_dir, "sauce-app-filename.txt"),
+      filename_reference
     )
 
-    UI.success("Release APK built successfully")
+    UI.success("Sauce Labs app is ready for mobile testing.")
   end
+
 end
