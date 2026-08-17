@@ -142,30 +142,7 @@ jobs:
         run: |
           # Run fastlane from repo root and point to Fastfile via FASTLANE_FASTFILE env var
           fastlane android upload_to_saucelabs --verbose
-      - name: Ensure `android/` exists before upload
-        if: always()
-        run: |
-          echo "Checking android/ exists before upload"
-          if [ -d android ]; then
-            echo "android/ exists"
-            ls -la android | sed -n '1,200p'
-          else
-            echo "android/ missing — attempting to generate again"
-            rm -rf tmp || true
-            if npx react-native init tmp --version 0.71.8 --verbose; then
-              if [ -d tmp/android ]; then
-                mv tmp/android ./android
-                echo "Generated and moved android/"
-                ls -la android | sed -n '1,200p'
-              else
-                echo "tmp/android still missing after init; tmp contents:" && ls -la tmp || true
-                exit 1
-              fi
-            else
-              echo "react-native init failed on retry; listing workspace:" && ls -la
-              exit 1
-            fi
-          fi
+      
 
       - name: Upload APK to Sauce Labs
         if: success()
