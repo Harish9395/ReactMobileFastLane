@@ -1,11 +1,13 @@
 name: Build Android and Upload to Sauce Labs
 
 on:
+  workflow_dispatch:
+
+  # Uncomment when you want automatic builds:
   # push:
   #   branches:
   #     - main
   #     - master
-  workflow_dispatch:
 
 jobs:
   build-and-upload:
@@ -17,41 +19,41 @@ jobs:
 
     steps:
       # --------------------------------------------------
-      # 1. Checkout repository
+      # 1. Checkout
       # --------------------------------------------------
       - name: Checkout
         uses: actions/checkout@v4
 
       # --------------------------------------------------
-      # 2. Node.js
+      # 2. Node
       # --------------------------------------------------
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: npm
+          node-version: '22'
+          package-manager-cache: false
 
       # --------------------------------------------------
-      # 3. Install React Native dependencies
+      # 3. Install npm dependencies
       # --------------------------------------------------
       - name: Install npm dependencies
         run: npm install
 
       # --------------------------------------------------
-      # 4. Generate Android native project
+      # 4. Generate Android project
       # --------------------------------------------------
       - name: Generate Android project
         shell: bash
         run: |
           set -e
 
-          echo "Creating temporary React Native project..."
+          echo "Generating temporary React Native 0.71.8 project..."
 
           rm -rf tmp
 
           npx react-native init tmp --version 0.71.8 --verbose
 
-          echo "Checking generated Android project..."
+          echo "Checking generated project..."
 
           test -d tmp/android
           test -f tmp/android/gradlew
@@ -63,34 +65,30 @@ jobs:
 
           rm -rf tmp
 
-          echo "Android project created successfully."
+          echo "Android project generated successfully."
 
+          echo "Android contents:"
           ls -la android
 
       # --------------------------------------------------
-      # 5. Put our Fastfile inside Android project
+      # 5. Install Fastlane configuration
       # --------------------------------------------------
       - name: Prepare Fastlane
         shell: bash
         run: |
           set -e
 
-          echo "Checking repository Fastfile..."
-
           test -f fastlane/Fastfile
-
-          echo "Creating android/fastlane..."
 
           mkdir -p android/fastlane
 
           cp fastlane/Fastfile android/fastlane/Fastfile
 
-          echo "Fastfile copied successfully."
-
+          echo "Fastlane configuration:"
           ls -la android/fastlane
 
       # --------------------------------------------------
-      # 6. Setup Java
+      # 6. Java
       # --------------------------------------------------
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -99,28 +97,27 @@ jobs:
           java-version: '17'
 
       # --------------------------------------------------
-      # 7. Setup Android SDK
+      # 7. Android SDK
       # --------------------------------------------------
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      # --------------------------------------------------
-      # 8. Install Android SDK packages
-      # --------------------------------------------------
       - name: Install Android SDK packages
         run: |
-          sdkmanager "platform-tools"
-          sdkmanager "platforms;android-33"
-          sdkmanager "build-tools;33.0.0"
+          yes | sdkmanager --licenses || true
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-33" \
+            "build-tools;33.0.0"
 
       # --------------------------------------------------
-      # 9. Make Gradle executable
+      # 8. Gradle permissions
       # --------------------------------------------------
       - name: Make Gradle executable
         run: chmod +x android/gradlew
 
       # --------------------------------------------------
-      # 10. Setup Ruby
+      # 9. Ruby
       # --------------------------------------------------
       - name: Setup Ruby
         uses: ruby/setup-ruby@v1
@@ -129,39 +126,53 @@ jobs:
           bundler-cache: true
 
       # --------------------------------------------------
-      # 11. Install Ruby dependencies
+      # 10. Install Ruby dependencies
       # --------------------------------------------------
       - name: Install Ruby dependencies
-        run: |
-          bundle install --jobs 4 --retry 3
+        run: bundle install --jobs 4 --retry 3
 
       # --------------------------------------------------
-      # 12. Verify Android project
+      # 11. Verify everything before Fastlane
       # --------------------------------------------------
-      - name: Verify Android project
+      - name: Verify build environment
+        shell: bash
         run: |
           set -e
 
-          echo "Current directory:"
+          echo "================================="
+          echo "Workspace"
+          echo "================================="
           pwd
 
-          echo ""
-          echo "Android directory:"
-          ls -la android
-
-          echo ""
-          echo "Gradle wrapper:"
+          echo "================================="
+          echo "Android"
+          echo "================================="
+          test -f android/gradlew
           ls -l android/gradlew
 
-          echo ""
-          echo "Fastlane:"
-          ls -la android/fastlane
-
-          test -f android/gradlew
+          echo "================================="
+          echo "Fastlane"
+          echo "================================="
           test -f android/fastlane/Fastfile
+          ls -l android/fastlane/Fastfile
+
+          echo "================================="
+          echo "Ruby"
+          echo "================================="
+          ruby --version
+
+          echo "================================="
+          echo "Bundler"
+          echo "================================="
+          bundle --version
+
+          echo "================================="
+          echo "Fastlane"
+          echo "================================="
+          bundle exec fastlane --version
 
       # --------------------------------------------------
-      # 13. Build APK + upload to Sauce Labs
+      # 12. Build APK + upload to Sauce Labs
       # --------------------------------------------------
       - name: Build and upload APK with Fastlane
         working-directory: android
@@ -171,7 +182,6 @@ jobs:
           FASTLANE_OPT_OUT_USAGE: '1'
           FASTLANE_DISABLE_COLORS: '1'
           FASTLANE_SKIP_UPDATE_CHECK: '1'
-          FASTLANE_HIDE_GITHUB_ISSUES: '1'
           CI: 'true'
         run: |
           set -e
@@ -179,17 +189,13 @@ jobs:
           echo "Running Fastlane from:"
           pwd
 
-          echo ""
           echo "Fastfile:"
           ls -l fastlane/Fastfile
-
-          echo ""
-          echo "Running lane..."
 
           bundle exec fastlane android upload_to_saucelabs --verbose
 
       # --------------------------------------------------
-      # 14. Upload APK as GitHub artifact
+      # 13. Upload APK artifact
       # --------------------------------------------------
       - name: Upload APK artifact
         if: success()
@@ -197,3 +203,4 @@ jobs:
         with:
           name: app-release-apk
           path: android/app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
