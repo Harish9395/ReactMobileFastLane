@@ -1,10 +1,19 @@
-name: Build Android and Upload to Sauce Labs
+name: Android Build and Sauce Labs Test
 
 on:
   workflow_dispatch:
 
+  # Uncomment if you want automatic testing
+  #
+  # push:
+  #   branches:
+  #     - main
+  #     - master
+
 jobs:
-  build-and-upload:
+
+  build-test:
+
     runs-on: ubuntu-latest
 
     env:
@@ -14,17 +23,17 @@ jobs:
 
     steps:
 
-      # ==================================================
-      # 1. CHECKOUT
-      # ==================================================
+      # ============================================================
+      # 1. Checkout
+      # ============================================================
 
       - name: Checkout
         uses: actions/checkout@v4
 
 
-      # ==================================================
-      # 2. NODE
-      # ==================================================
+      # ============================================================
+      # 2. Node
+      # ============================================================
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -33,26 +42,25 @@ jobs:
           package-manager-cache: false
 
 
-      # ==================================================
-      # 3. INSTALL NPM
-      # ==================================================
+      # ============================================================
+      # 3. Install npm dependencies
+      # ============================================================
 
       - name: Install npm dependencies
         run: npm install
 
 
-      # ==================================================
-      # 4. GENERATE ANDROID PROJECT
-      # ==================================================
+      # ============================================================
+      # 4. Generate Android project
+      # ============================================================
 
       - name: Generate Android project
         shell: bash
         run: |
+
           set -e
 
-          echo "========================================"
-          echo "Generating React Native Android project"
-          echo "========================================"
+          echo "Generating React Native Android project..."
 
           rm -rf tmp
 
@@ -63,29 +71,28 @@ jobs:
           test -d tmp/android
           test -f tmp/android/gradlew
 
+          echo "Replacing android directory..."
+
           rm -rf android
 
           mv tmp/android android
 
           rm -rf tmp
 
-          echo "Android project generated successfully"
+          echo "Android project generated."
 
           ls -la android
 
 
-      # ==================================================
-      # 5. PREPARE FASTLANE
-      # ==================================================
+      # ============================================================
+      # 5. Copy Fastlane
+      # ============================================================
 
       - name: Prepare Fastlane
         shell: bash
         run: |
-          set -e
 
-          echo "========================================"
-          echo "Preparing Fastlane"
-          echo "========================================"
+          set -e
 
           test -f fastlane/Fastfile
 
@@ -93,15 +100,13 @@ jobs:
 
           cp fastlane/Fastfile android/fastlane/Fastfile
 
-          test -f android/fastlane/Fastfile
-
           echo "Fastfile:"
           sed -n '1,260p' android/fastlane/Fastfile
 
 
-      # ==================================================
-      # 6. JAVA
-      # ==================================================
+      # ============================================================
+      # 6. Java 17
+      # ============================================================
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -110,18 +115,16 @@ jobs:
           java-version: "17"
 
 
-      # ==================================================
-      # 7. ANDROID SDK
-      # ==================================================
+      # ============================================================
+      # 7. Android SDK
+      # ============================================================
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
 
       - name: Install Android SDK packages
-        shell: bash
         run: |
-          set -e
 
           yes | sdkmanager --licenses || true
 
@@ -131,17 +134,17 @@ jobs:
             "build-tools;33.0.0"
 
 
-      # ==================================================
-      # 8. GRADLE PERMISSION
-      # ==================================================
+      # ============================================================
+      # 8. Gradle permission
+      # ============================================================
 
       - name: Make Gradle executable
         run: chmod +x android/gradlew
 
 
-      # ==================================================
-      # 9. RUBY
-      # ==================================================
+      # ============================================================
+      # 9. Ruby
+      # ============================================================
 
       - name: Setup Ruby
         uses: ruby/setup-ruby@v1
@@ -150,191 +153,163 @@ jobs:
           bundler-cache: true
 
 
-      # ==================================================
-      # 10. RUBY DEPENDENCIES
-      # ==================================================
+      # ============================================================
+      # 10. Install Ruby dependencies
+      # ============================================================
 
       - name: Install Ruby dependencies
         run: |
+
           bundle install \
             --jobs 4 \
             --retry 3
 
 
-      # ==================================================
-      # 11. VERIFY SAUCE CREDENTIALS
-      # ==================================================
+      # ============================================================
+      # 11. Verify credentials
+      # ============================================================
 
-      - name: Verify Sauce Labs configuration
+      - name: Verify Sauce credentials
         shell: bash
         run: |
+
           set -e
 
-          echo "========================================"
-          echo "Sauce Labs configuration"
-          echo "========================================"
-
           if [ -z "$SAUCE_USERNAME" ]; then
-            echo "ERROR: SAUCE_USERNAME is empty"
+            echo "SAUCE_USERNAME is missing"
             exit 1
           fi
 
           if [ -z "$SAUCE_ACCESS_KEY" ]; then
-            echo "ERROR: SAUCE_ACCESS_KEY is empty"
+            echo "SAUCE_ACCESS_KEY is missing"
             exit 1
           fi
 
-          echo "SAUCE_USERNAME is configured"
-          echo "SAUCE_ACCESS_KEY is configured"
-          echo "SAUCE_REGION=$SAUCE_REGION"
+          echo "Sauce credentials are configured."
 
 
-      # ==================================================
-      # 12. VERIFY FASTLANE
-      # ==================================================
-
-      - name: Verify Fastlane
-        working-directory: android
-        shell: bash
-        run: |
-          set -e
-
-          echo "========================================"
-          echo "Fastlane version"
-          echo "========================================"
-
-          bundle exec fastlane --version
-
-          echo "========================================"
-          echo "Fastfile"
-          echo "========================================"
-
-          test -f fastlane/Fastfile
-
-          ls -lh fastlane/Fastfile
-
-
-      # ==================================================
-      # 13. BUILD APK + UPLOAD TO SAUCE
-      # ==================================================
+      # ============================================================
+      # 12. Build + Upload using Fastlane
+      # ============================================================
 
       - name: Build APK and upload to Sauce Labs
         working-directory: android
         env:
+          SAUCE_USERNAME: ${{ secrets.SAUCE_USERNAME }}
+          SAUCE_ACCESS_KEY: ${{ secrets.SAUCE_ACCESS_KEY }}
+          SAUCE_REGION: eu-central-1
           FASTLANE_OPT_OUT_USAGE: "1"
           FASTLANE_DISABLE_COLORS: "1"
           FASTLANE_SKIP_UPDATE_CHECK: "1"
           CI: "true"
 
-        shell: bash
         run: |
+
           set -e
 
-          echo "========================================"
-          echo "BUILD + SAUCE UPLOAD"
-          echo "========================================"
+          echo "=========================================="
+          echo "FASTLANE BUILD + SAUCE UPLOAD"
+          echo "=========================================="
 
-          bundle exec fastlane android upload_to_saucelabs
+          bundle exec fastlane android upload_to_saucelabs --verbose
+
+          echo "=========================================="
+          echo "SAUCE APP"
+          echo "=========================================="
+
+          cat sauce_app.txt
+
+          echo
+
+          echo "=========================================="
+          echo "SAUCE APP ID"
+          echo "=========================================="
+
+          cat sauce_app_id.txt
 
 
-      # ==================================================
-      # 14. VERIFY APK
-      # ==================================================
+      # ============================================================
+      # 13. Export Sauce app information
+      # ============================================================
 
-      - name: Verify APK
+      - name: Export Sauce app information
         shell: bash
         run: |
+
           set -e
 
-          APK="android/app/build/outputs/apk/release/app-release.apk"
+          SAUCE_APP=$(cat android/sauce_app.txt)
 
-          echo "========================================"
-          echo "APK verification"
-          echo "========================================"
+          echo "SAUCE_APP=$SAUCE_APP" >> "$GITHUB_ENV"
 
-          test -f "$APK"
-
-          ls -lh "$APK"
-
-          file "$APK"
+          echo "Sauce application:"
+          echo "$SAUCE_APP"
 
 
-      # ==================================================
-      # 15. SHOW SAUCE APP ID
-      # ==================================================
+      # ============================================================
+      # 14. Install Appium test dependencies
+      # ============================================================
 
-      - name: Show Sauce Labs App Storage ID
-        shell: bash
+      - name: Install Appium test dependencies
         run: |
-          set -e
 
-          echo "========================================"
-          echo "SAUCE APP STORAGE"
-          echo "========================================"
-
-          test -f android/sauce-app-id.txt
-          test -f android/sauce-app-filename.txt
-
-          echo "App ID:"
-          cat android/sauce-app-id.txt
-
-          echo ""
-
-          echo "Filename:"
-          cat android/sauce-app-filename.txt
+          npm install --save-dev \
+            webdriverio \
+            @wdio/cli \
+            @wdio/local-runner \
+            @wdio/mocha-framework \
+            @wdio/spec-reporter
 
 
-      # ==================================================
-      # 16. VERIFY FILE EXISTS IN SAUCE STORAGE
-      # ==================================================
+      # ============================================================
+      # 15. Run Appium tests on Sauce Labs
+      # ============================================================
 
-      - name: Verify APK exists in Sauce Labs Storage
-        shell: bash
+      - name: Run Android Appium tests on Sauce Labs
+        env:
+          SAUCE_USERNAME: ${{ secrets.SAUCE_USERNAME }}
+          SAUCE_ACCESS_KEY: ${{ secrets.SAUCE_ACCESS_KEY }}
+          SAUCE_APP: ${{ env.SAUCE_APP }}
+          SAUCE_REGION: eu-central-1
+
         run: |
+
           set -e
 
-          echo "========================================"
-          echo "VERIFYING SAUCE STORAGE"
-          echo "========================================"
+          echo "=========================================="
+          echo "RUNNING APPIUM TESTS"
+          echo "=========================================="
 
-          curl \
-            --fail-with-body \
-            --silent \
-            --show-error \
-            --location \
-            --user "$SAUCE_USERNAME:$SAUCE_ACCESS_KEY" \
-            "https://api.${SAUCE_REGION}.saucelabs.com/v1/storage/files?name=$(cat android/sauce-app-filename.txt | sed 's/storage:filename=//')" \
-            > sauce-storage.json
+          echo "Sauce App:"
+          echo "$SAUCE_APP"
 
-          echo "Sauce Storage response:"
-
-          cat sauce-storage.json
+          npm test
 
 
-      # ==================================================
-      # 17. UPLOAD APK TO GITHUB ARTIFACTS
-      # ==================================================
+      # ============================================================
+      # 16. Upload APK to GitHub
+      # ============================================================
 
       - name: Upload APK artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: app-release-apk
+          name: android-release-apk
           path: android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
 
 
-      # ==================================================
-      # 18. UPLOAD SAUCE RESPONSE
-      # ==================================================
+      # ============================================================
+      # 17. Upload Sauce information
+      # ============================================================
 
-      - name: Upload Sauce response
+      - name: Upload Sauce metadata
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: sauce-upload-response
+          name: sauce-app-information
           path: |
-            sauce-storage.json
-            android/sauce-app-id.txt
-            android/sauce-app-filename.txt
-          if-no-files-found: warn
+            android/sauce_app.txt
+            android/sauce_app_id.txt
+            android/sauce_app_filename.txt
+          if-no-files-found: ignore
