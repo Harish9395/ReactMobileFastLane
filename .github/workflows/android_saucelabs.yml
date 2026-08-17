@@ -60,6 +60,14 @@ jobs:
             mv tmp/android ./android
             echo "Moved tmp/android -> ./android"
             ls -la android || true
+            # Restore fastlane config from the repo (in case android was replaced)
+            if [ -f android/fastlane/Fastfile ]; then
+              echo "fastlane already present in android/fastlane"
+            else
+              echo "Restoring android/fastlane from repository"
+              git checkout -- android/fastlane || true
+            fi
+            ls -la android/fastlane || true
           else
             echo "tmp/android missing. tmp contents:" && ls -la tmp
             exit 1
