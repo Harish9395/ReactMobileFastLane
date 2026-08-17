@@ -1,5 +1,5 @@
 source 'https://rubygems.org'
 
-ruby '3.2.11'
+ruby '3.3.12'
 
 gem 'fastlane', '~> 2.238.0'
