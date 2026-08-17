@@ -31,18 +31,47 @@ jobs:
 
       # Skipping web build for React Native project (no `build` script)
 
-      - name: Prepare React Native native projects
+      - name: Prepare React Native native projects (retry + debug)
         run: |
-          # Initialize a temporary React Native app and copy native projects into this repo
-          npx react-native init tmp --version 0.71.8 --template react-native-template-bare-minimum || true
+          set -e
+          echo "npx version:" && npx --version || true
+          # Retry init a few times to avoid transient network failures
+          RETRIES=3
+          for i in $(seq 1 $RETRIES); do
+            echo "Attempt $i: creating temporary react-native app"
+            if npx react-native init tmp --version 0.71.8 --template react-native-template-bare-minimum --verbose; then
+              echo "init succeeded"
+              break
+            else
+              echo "init failed on attempt $i"
+              if [ "$i" -lt "$RETRIES" ]; then sleep $((i*2)); fi
+            fi
+          done
+
+          if [ ! -d tmp ]; then
+            echo "tmp directory not created. Listing workspace for debugging:" && ls -la
+            exit 1
+          fi
+
           if [ -d tmp/android ]; then
             rm -rf android || true
             mv tmp/android ./android
+            echo "Moved tmp/android -> ./android"
+            ls -la android || true
+          else
+            echo "tmp/android missing. tmp contents:" && ls -la tmp
+            exit 1
           fi
+
           if [ -d tmp/ios ]; then
             rm -rf ios || true
             mv tmp/ios ./ios
+            echo "Moved tmp/ios -> ./ios"
+            ls -la ios || true
+          else
+            echo "tmp/ios missing (iOS not required on Linux). tmp contents:" && ls -la tmp || true
           fi
+
           rm -rf tmp || true
 
       - name: Setup Java
