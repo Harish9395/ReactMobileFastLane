@@ -131,7 +131,6 @@ jobs:
           gem install fastlane -NV
 
       - name: Run Fastlane lane (build + upload)
-        working-directory: android
         env:
           SAUCE_USERNAME: ${{ secrets.SAUCE_USERNAME }}
           SAUCE_ACCESS_KEY: ${{ secrets.SAUCE_ACCESS_KEY }}
@@ -139,8 +138,9 @@ jobs:
           FASTLANE_DISABLE_COLORS: '1'
           FASTLANE_SKIP_UPDATE_CHECK: '1'
           CI: 'true'
+          FASTLANE_FASTFILE: ${{ github.workspace }}/android/fastlane/Fastfile
         run: |
-          # Run fastlane inside the android project (Fastfile should be in android/fastlane)
+          # Run fastlane from repo root and point to Fastfile via FASTLANE_FASTFILE env var
           fastlane android upload_to_saucelabs --verbose
 
       - name: Upload APK to Sauce Labs
