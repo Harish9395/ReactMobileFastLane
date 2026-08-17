@@ -3,12 +3,6 @@ name: Build Android and Upload to Sauce Labs
 on:
   workflow_dispatch:
 
-  # Uncomment when you want automatic builds:
-  # push:
-  #   branches:
-  #     - main
-  #     - master
-
 jobs:
   build-and-upload:
     runs-on: ubuntu-latest
@@ -16,19 +10,21 @@ jobs:
     env:
       SAUCE_USERNAME: ${{ secrets.SAUCE_USERNAME }}
       SAUCE_ACCESS_KEY: ${{ secrets.SAUCE_ACCESS_KEY }}
+      SAUCE_REGION: eu-central-1
 
     steps:
 
-      # --------------------------------------------------
-      # 1. Checkout
-      # --------------------------------------------------
+      # ==================================================
+      # 1. CHECKOUT
+      # ==================================================
 
       - name: Checkout
         uses: actions/checkout@v4
 
-      # --------------------------------------------------
-      # 2. Node
-      # --------------------------------------------------
+
+      # ==================================================
+      # 2. NODE
+      # ==================================================
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -36,76 +32,76 @@ jobs:
           node-version: "22"
           package-manager-cache: false
 
-      # --------------------------------------------------
-      # 3. Install npm dependencies
-      # --------------------------------------------------
+
+      # ==================================================
+      # 3. INSTALL NPM
+      # ==================================================
 
       - name: Install npm dependencies
         run: npm install
 
-      # --------------------------------------------------
-      # 4. Generate Android project
-      # --------------------------------------------------
+
+      # ==================================================
+      # 4. GENERATE ANDROID PROJECT
+      # ==================================================
 
       - name: Generate Android project
         shell: bash
         run: |
           set -e
 
-          echo "Generating React Native 0.71.8 project..."
+          echo "========================================"
+          echo "Generating React Native Android project"
+          echo "========================================"
 
           rm -rf tmp
 
-          npx react-native init tmp --version 0.71.8 --verbose
-
-          echo "Checking generated project..."
+          npx react-native init tmp \
+            --version 0.71.8 \
+            --verbose
 
           test -d tmp/android
           test -f tmp/android/gradlew
 
-          echo "Replacing android directory..."
-
           rm -rf android
+
           mv tmp/android android
 
           rm -rf tmp
 
-          echo "Android project generated successfully."
+          echo "Android project generated successfully"
 
           ls -la android
 
-      # --------------------------------------------------
-      # 5. Install Fastlane configuration
-      # --------------------------------------------------
+
+      # ==================================================
+      # 5. PREPARE FASTLANE
+      # ==================================================
 
       - name: Prepare Fastlane
         shell: bash
         run: |
           set -e
 
+          echo "========================================"
+          echo "Preparing Fastlane"
+          echo "========================================"
+
           test -f fastlane/Fastfile
-
-          echo "========================================"
-          echo "SOURCE FASTFILE"
-          echo "========================================"
-
-          sed -n '1,220p' fastlane/Fastfile
 
           mkdir -p android/fastlane
 
           cp fastlane/Fastfile android/fastlane/Fastfile
 
-          echo "========================================"
-          echo "COPIED FASTFILE"
-          echo "========================================"
-
           test -f android/fastlane/Fastfile
 
-          sed -n '1,220p' android/fastlane/Fastfile
+          echo "Fastfile:"
+          sed -n '1,260p' android/fastlane/Fastfile
 
-      # --------------------------------------------------
-      # 6. Java
-      # --------------------------------------------------
+
+      # ==================================================
+      # 6. JAVA
+      # ==================================================
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -113,15 +109,20 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      # --------------------------------------------------
-      # 7. Android SDK
-      # --------------------------------------------------
+
+      # ==================================================
+      # 7. ANDROID SDK
+      # ==================================================
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
+
       - name: Install Android SDK packages
+        shell: bash
         run: |
+          set -e
+
           yes | sdkmanager --licenses || true
 
           sdkmanager \
@@ -129,16 +130,18 @@ jobs:
             "platforms;android-33" \
             "build-tools;33.0.0"
 
-      # --------------------------------------------------
-      # 8. Gradle permissions
-      # --------------------------------------------------
+
+      # ==================================================
+      # 8. GRADLE PERMISSION
+      # ==================================================
 
       - name: Make Gradle executable
         run: chmod +x android/gradlew
 
-      # --------------------------------------------------
-      # 9. Ruby
-      # --------------------------------------------------
+
+      # ==================================================
+      # 9. RUBY
+      # ==================================================
 
       - name: Setup Ruby
         uses: ruby/setup-ruby@v1
@@ -146,111 +149,192 @@ jobs:
           ruby-version: "3.3"
           bundler-cache: true
 
-      # --------------------------------------------------
-      # 10. Install Ruby dependencies
-      # --------------------------------------------------
+
+      # ==================================================
+      # 10. RUBY DEPENDENCIES
+      # ==================================================
 
       - name: Install Ruby dependencies
-        run: bundle install --jobs 4 --retry 3
+        run: |
+          bundle install \
+            --jobs 4 \
+            --retry 3
 
-      # --------------------------------------------------
-      # 11. Verify environment
-      # --------------------------------------------------
 
-      - name: Verify build environment
+      # ==================================================
+      # 11. VERIFY SAUCE CREDENTIALS
+      # ==================================================
+
+      - name: Verify Sauce Labs configuration
         shell: bash
         run: |
           set -e
 
           echo "========================================"
-          echo "Workspace"
+          echo "Sauce Labs configuration"
           echo "========================================"
 
-          pwd
+          if [ -z "$SAUCE_USERNAME" ]; then
+            echo "ERROR: SAUCE_USERNAME is empty"
+            exit 1
+          fi
+
+          if [ -z "$SAUCE_ACCESS_KEY" ]; then
+            echo "ERROR: SAUCE_ACCESS_KEY is empty"
+            exit 1
+          fi
+
+          echo "SAUCE_USERNAME is configured"
+          echo "SAUCE_ACCESS_KEY is configured"
+          echo "SAUCE_REGION=$SAUCE_REGION"
+
+
+      # ==================================================
+      # 12. VERIFY FASTLANE
+      # ==================================================
+
+      - name: Verify Fastlane
+        working-directory: android
+        shell: bash
+        run: |
+          set -e
 
           echo "========================================"
-          echo "Android"
-          echo "========================================"
-
-          test -f android/gradlew
-          ls -l android/gradlew
-
-          echo "========================================"
-          echo "Fastlane"
-          echo "========================================"
-
-          test -f android/fastlane/Fastfile
-          ls -l android/fastlane/Fastfile
-
-          echo "========================================"
-          echo "Checking Sauce upload configuration"
-          echo "========================================"
-
-          grep -n "storage/upload" android/fastlane/Fastfile
-          grep -n "payload=" android/fastlane/Fastfile
-          grep -n "name=myapp.apk" android/fastlane/Fastfile
-
-          echo "========================================"
-          echo "Ruby"
-          echo "========================================"
-
-          ruby --version
-
-          echo "========================================"
-          echo "Bundler"
-          echo "========================================"
-
-          bundle --version
-
-          echo "========================================"
-          echo "Fastlane"
+          echo "Fastlane version"
           echo "========================================"
 
           bundle exec fastlane --version
 
-      # --------------------------------------------------
-      # 12. Build APK + upload to Sauce Labs
-      # --------------------------------------------------
+          echo "========================================"
+          echo "Fastfile"
+          echo "========================================"
 
-      - name: Build and upload APK with Fastlane
+          test -f fastlane/Fastfile
+
+          ls -lh fastlane/Fastfile
+
+
+      # ==================================================
+      # 13. BUILD APK + UPLOAD TO SAUCE
+      # ==================================================
+
+      - name: Build APK and upload to Sauce Labs
         working-directory: android
         env:
-          SAUCE_USERNAME: ${{ secrets.SAUCE_USERNAME }}
-          SAUCE_ACCESS_KEY: ${{ secrets.SAUCE_ACCESS_KEY }}
           FASTLANE_OPT_OUT_USAGE: "1"
           FASTLANE_DISABLE_COLORS: "1"
           FASTLANE_SKIP_UPDATE_CHECK: "1"
           CI: "true"
 
+        shell: bash
         run: |
           set -e
 
           echo "========================================"
-          echo "Running Fastlane"
+          echo "BUILD + SAUCE UPLOAD"
           echo "========================================"
 
-          pwd
+          bundle exec fastlane android upload_to_saucelabs
+
+
+      # ==================================================
+      # 14. VERIFY APK
+      # ==================================================
+
+      - name: Verify APK
+        shell: bash
+        run: |
+          set -e
+
+          APK="android/app/build/outputs/apk/release/app-release.apk"
 
           echo "========================================"
-          echo "Fastfile being executed"
+          echo "APK verification"
           echo "========================================"
 
-          sed -n '1,220p' fastlane/Fastfile
+          test -f "$APK"
+
+          ls -lh "$APK"
+
+          file "$APK"
+
+
+      # ==================================================
+      # 15. SHOW SAUCE APP ID
+      # ==================================================
+
+      - name: Show Sauce Labs App Storage ID
+        shell: bash
+        run: |
+          set -e
 
           echo "========================================"
-          echo "Executing lane"
+          echo "SAUCE APP STORAGE"
           echo "========================================"
 
-          bundle exec fastlane android upload_to_saucelabs --verbose
+          test -f android/sauce-app-id.txt
+          test -f android/sauce-app-filename.txt
 
-      # --------------------------------------------------
-      # 13. Upload APK artifact
-      # --------------------------------------------------
+          echo "App ID:"
+          cat android/sauce-app-id.txt
+
+          echo ""
+
+          echo "Filename:"
+          cat android/sauce-app-filename.txt
+
+
+      # ==================================================
+      # 16. VERIFY FILE EXISTS IN SAUCE STORAGE
+      # ==================================================
+
+      - name: Verify APK exists in Sauce Labs Storage
+        shell: bash
+        run: |
+          set -e
+
+          echo "========================================"
+          echo "VERIFYING SAUCE STORAGE"
+          echo "========================================"
+
+          curl \
+            --fail-with-body \
+            --silent \
+            --show-error \
+            --location \
+            --user "$SAUCE_USERNAME:$SAUCE_ACCESS_KEY" \
+            "https://api.${SAUCE_REGION}.saucelabs.com/v1/storage/files?name=$(cat android/sauce-app-filename.txt | sed 's/storage:filename=//')" \
+            > sauce-storage.json
+
+          echo "Sauce Storage response:"
+
+          cat sauce-storage.json
+
+
+      # ==================================================
+      # 17. UPLOAD APK TO GITHUB ARTIFACTS
+      # ==================================================
 
       - name: Upload APK artifact
-        if: success()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: app-release-apk
           path: android/app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
+
+
+      # ==================================================
+      # 18. UPLOAD SAUCE RESPONSE
+      # ==================================================
+
+      - name: Upload Sauce response
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sauce-upload-response
+          path: |
+            sauce-storage.json
+            android/sauce-app-id.txt
+            android/sauce-app-filename.txt
+          if-no-files-found: warn
