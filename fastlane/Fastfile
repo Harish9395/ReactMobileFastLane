@@ -2,97 +2,52 @@ default_platform(:android)
 
 platform :android do
 
-  desc "Build release APK"
-  lane :apk do
-
-    android_dir = File.expand_path("..", __dir__)
-
-    UI.message("========================================")
-    UI.message("Android project")
-    UI.message(android_dir)
-    UI.message("========================================")
+  desc "Build APK"
+  lane :build_apk do
 
     gradle(
-      project_dir: android_dir,
       task: "clean"
     )
 
     gradle(
-      project_dir: android_dir,
       task: "assembleRelease",
       flags: "-Pci=true"
     )
 
-    apk_path = File.join(
-      android_dir,
-      "app",
-      "build",
-      "outputs",
-      "apk",
-      "release",
-      "app-release.apk"
-    )
+    apk_path = lane_context[SharedValues::GRADLE_APK_OUTPUT_PATH]
+
+    UI.success("========================================")
+    UI.success("APK BUILD SUCCESSFUL")
+    UI.success("APK: #{apk_path}")
+    UI.success("========================================")
 
     unless File.exist?(apk_path)
-      UI.user_error!("APK was not created: #{apk_path}")
+      UI.user_error!("APK does not exist: #{apk_path}")
     end
 
-    UI.success("APK created successfully")
-    UI.success(apk_path)
-
-    Actions.lane_context[:APK_PATH] = apk_path
+    apk_path
   end
 
 
-  desc "Build APK and upload it to Sauce Labs"
+  desc "Build APK and upload to Sauce Labs"
   lane :upload_to_saucelabs do
 
-    android_dir = File.expand_path("..", __dir__)
-
-    apk_path = File.join(
-      android_dir,
-      "app",
-      "build",
-      "outputs",
-      "apk",
-      "release",
-      "app-release.apk"
-    )
-
-    #
-    # -----------------------------------------
-    # Validate Sauce credentials
-    # -----------------------------------------
-    #
-
-    unless ENV["SAUCE_USERNAME"] && !ENV["SAUCE_USERNAME"].empty?
-      UI.user_error!("SAUCE_USERNAME is missing")
-    end
-
-    unless ENV["SAUCE_ACCESS_KEY"] && !ENV["SAUCE_ACCESS_KEY"].empty?
-      UI.user_error!("SAUCE_ACCESS_KEY is missing")
-    end
-
-
-    #
-    # -----------------------------------------
-    # Build APK
-    # -----------------------------------------
-    #
+    # ----------------------------------------
+    # 1. Build APK
+    # ----------------------------------------
 
     gradle(
-      project_dir: android_dir,
       task: "clean"
     )
 
     gradle(
-      project_dir: android_dir,
       task: "assembleRelease",
       flags: "-Pci=true"
     )
 
+    apk_path = lane_context[SharedValues::GRADLE_APK_OUTPUT_PATH]
 
-    unless File.exist?(apk_path)
+    unless apk_path && File.exist?(apk_path)
       UI.user_error!("APK was not created: #{apk_path}")
     end
 
@@ -100,49 +55,47 @@ platform :android do
     UI.message("APK: #{apk_path}")
 
 
-    #
-    # -----------------------------------------
-    # Upload to Sauce Labs
-    # -----------------------------------------
-    #
+    # ----------------------------------------
+    # 2. Sauce configuration
+    # ----------------------------------------
 
-    sauce_region = ENV.fetch(
-      "SAUCE_REGION",
-      "eu-central-1"
-    )
+    sauce_username = ENV["SAUCE_USERNAME"]
+    sauce_access_key = ENV["SAUCE_ACCESS_KEY"]
 
-    sauce_api = case sauce_region
-                when "eu-central-1"
-                  "https://api.eu-central-1.saucelabs.com"
-                when "us-west-1"
-                  "https://api.us-west-1.saucelabs.com"
-                when "us-east-4"
-                  "https://api.us-east-4.saucelabs.com"
-                else
-                  UI.user_error!(
-                    "Unsupported Sauce region: #{sauce_region}"
-                  )
-                end
+    unless sauce_username && !sauce_username.empty?
+      UI.user_error!("SAUCE_USERNAME is not set")
+    end
+
+    unless sauce_access_key && !sauce_access_key.empty?
+      UI.user_error!("SAUCE_ACCESS_KEY is not set")
+    end
+
+    sauce_region = ENV.fetch("SAUCE_REGION", "eu-central-1")
+
+    sauce_api =
+      case sauce_region
+      when "eu-central-1"
+        "https://api.eu-central-1.saucelabs.com"
+      when "us-west-1"
+        "https://api.us-west-1.saucelabs.com"
+      when "us-east-4"
+        "https://api.us-east-4.saucelabs.com"
+      else
+        UI.user_error!("Unsupported Sauce region: #{sauce_region}")
+      end
 
 
-    app_name = "myapp-#{ENV['GITHUB_RUN_NUMBER'] || Time.now.to_i}.apk"
-
+    # ----------------------------------------
+    # 3. Upload APK
+    # ----------------------------------------
 
     UI.message("========================================")
     UI.message("Uploading APK to Sauce Labs")
     UI.message("========================================")
 
-    UI.message("Region: #{sauce_region}")
-    UI.message("API: #{sauce_api}")
-    UI.message("File: #{apk_path}")
-    UI.message("Name: #{app_name}")
+    app_name = "myapp-#{Time.now.to_i}.apk"
 
-
-    response_file = File.join(
-      Dir.tmpdir,
-      "sauce_upload_response.json"
-    )
-
+    response_file = "/tmp/sauce_upload_response.json"
 
     sh(
       "curl",
@@ -151,7 +104,7 @@ platform :android do
       "--silent",
       "--location",
       "-u",
-      "#{ENV['SAUCE_USERNAME']}:#{ENV['SAUCE_ACCESS_KEY']}",
+      "#{sauce_username}:#{sauce_access_key}",
       "--request",
       "POST",
       "#{sauce_api}/v1/storage/upload",
@@ -163,90 +116,62 @@ platform :android do
       "description=GitHub Actions Android build",
       "--form",
       "tags=github-actions,android",
-      "-o",
+      "--output",
       response_file
     )
 
 
-    unless File.exist?(response_file)
-      UI.user_error!(
-        "Sauce Labs upload did not return a response"
-      )
-    end
+    # ----------------------------------------
+    # 4. Parse Sauce response
+    # ----------------------------------------
 
-
-    response = File.read(response_file)
+    response = JSON.parse(File.read(response_file))
 
     UI.message("========================================")
     UI.message("Sauce Labs response")
     UI.message("========================================")
 
-    UI.message(response)
+    UI.message(JSON.pretty_generate(response))
 
 
+    # IMPORTANT:
+    # Sauce response is:
     #
-    # -----------------------------------------
-    # Extract storage ID
-    # -----------------------------------------
+    # {
+    #   "item": {
+    #     "id": "xxxxx"
+    #   }
+    # }
     #
+    # NOT:
+    #
+    # {
+    #   "file_id": "xxxxx"
+    # }
 
-    begin
-      json = JSON.parse(response)
-    rescue JSON::ParserError => e
-      UI.user_error!(
-        "Sauce Labs returned invalid JSON: #{e.message}\n#{response}"
-      )
-    end
-
-
-    file_id =
-      json["id"] ||
-      json["file_id"] ||
-      json["fileId"]
-
+    file_id = response.dig("item", "id")
 
     unless file_id
       UI.user_error!(
-        "Could not find Sauce Storage file ID in response:\n#{response}"
+        "Could not find Sauce Storage file ID in response:\n#{JSON.pretty_generate(response)}"
       )
     end
 
 
-    storage_app = "storage:#{file_id}"
+    # ----------------------------------------
+    # 5. Save Sauce information
+    # ----------------------------------------
 
-
-    #
-    # Save information for GitHub Actions
-    #
-    File.write(
-      "sauce_app.txt",
-      storage_app
-    )
-
-    File.write(
-      "sauce_app_filename.txt",
-      app_name
-    )
-
-    File.write(
-      "sauce_app_id.txt",
-      file_id
-    )
-
+    File.write("sauce_app_id.txt", file_id)
+    File.write("sauce_app.txt", "storage:#{file_id}")
 
     UI.success("========================================")
-    UI.success("APK uploaded to Sauce Labs")
+    UI.success("SAUCE UPLOAD SUCCESSFUL")
+    UI.success("File ID: #{file_id}")
+    UI.success("App reference: storage:#{file_id}")
+    UI.success("File name: #{app_name}")
     UI.success("========================================")
 
-    UI.success("Storage ID: #{file_id}")
-    UI.success("App: #{storage_app}")
-    UI.success("Filename: #{app_name}")
-
-
-    Actions.lane_context[:SAUCE_APP_ID] = file_id
-    Actions.lane_context[:SAUCE_APP] = storage_app
-    Actions.lane_context[:APK_PATH] = apk_path
-
+    file_id
   end
-
 end
