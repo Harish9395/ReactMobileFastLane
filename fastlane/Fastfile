@@ -6,6 +6,8 @@ platform :android do
   lane :upload_to_saucelabs do
     android_dir = File.expand_path("..", __dir__)
 
+    gradlew_path = File.join(android_dir, "gradlew")
+
     apk_path = File.join(
       android_dir,
       "app",
@@ -16,18 +18,26 @@ platform :android do
       "app-release.apk"
     )
 
-    gradlew_path = File.join(android_dir, "gradlew")
+    sauce_username = ENV["SAUCE_USERNAME"]
+    sauce_access_key = ENV["SAUCE_ACCESS_KEY"]
 
+    UI.message("========================================")
     UI.message("Android project: #{android_dir}")
-    UI.message("Gradle wrapper: #{gradlew_path}")
     UI.message("APK path: #{apk_path}")
+    UI.message("========================================")
 
-    # Check Gradle wrapper
+    # ---------------------------------------------
+    # Validate Gradle
+    # ---------------------------------------------
+
     unless File.exist?(gradlew_path)
-      UI.user_error!("gradlew not found at #{gradlew_path}")
+      UI.user_error!("gradlew not found: #{gradlew_path}")
     end
 
+    # ---------------------------------------------
     # Build APK
+    # ---------------------------------------------
+
     gradle(
       project_dir: android_dir,
       task: "clean"
@@ -39,7 +49,10 @@ platform :android do
       flags: "-Pci=true"
     )
 
-    # Check APK
+    # ---------------------------------------------
+    # Validate APK
+    # ---------------------------------------------
+
     unless File.exist?(apk_path)
       UI.user_error!("APK was not created: #{apk_path}")
     end
@@ -50,31 +63,112 @@ platform :android do
     UI.message("APK: #{apk_path}")
     UI.message("APK size: #{apk_size} bytes")
 
-    # Check Sauce Labs credentials
-    sauce_username = ENV["SAUCE_USERNAME"]
-    sauce_access_key = ENV["SAUCE_ACCESS_KEY"]
+    # ---------------------------------------------
+    # Validate Sauce credentials
+    # ---------------------------------------------
 
-    if sauce_username.to_s.empty? || sauce_access_key.to_s.empty?
+    if sauce_username.to_s.empty?
+      UI.user_error!("SAUCE_USERNAME is missing")
+    end
+
+    if sauce_access_key.to_s.empty?
+      UI.user_error!("SAUCE_ACCESS_KEY is missing")
+    end
+
+    # ---------------------------------------------
+    # Sauce Labs upload
+    # ---------------------------------------------
+
+    sauce_url =
+      "https://api.eu-central-1.saucelabs.com/v1/storage/upload"
+
+    UI.message("========================================")
+    UI.message("Uploading APK to Sauce Labs")
+    UI.message("Endpoint: #{sauce_url}")
+    UI.message("Filename: myapp.apk")
+    UI.message("========================================")
+
+    response_file = File.join(
+      Dir.tmpdir,
+      "sauce_upload_response.json"
+    )
+
+    sh(
+      "curl",
+      "--silent",
+      "--show-error",
+      "--fail-with-body",
+      "--location",
+      "--user",
+      "#{sauce_username}:#{sauce_access_key}",
+      "--request",
+      "POST",
+      sauce_url,
+      "--output",
+      response_file,
+      "--write-out",
+      "%{http_code}",
+      "--form",
+      "payload=@#{apk_path}",
+      "--form",
+      "name=myapp.apk"
+    )
+
+    response = File.read(response_file)
+
+    UI.message("========================================")
+    UI.message("Sauce Labs upload response")
+    UI.message("========================================")
+    UI.message(response)
+
+    # ---------------------------------------------
+    # Verify upload
+    # ---------------------------------------------
+
+    verify_url =
+      "https://api.eu-central-1.saucelabs.com/v1/storage/files?name=myapp.apk"
+
+    verify_file = File.join(
+      Dir.tmpdir,
+      "sauce_verify_response.json"
+    )
+
+    UI.message("========================================")
+    UI.message("Verifying file in Sauce Storage")
+    UI.message("========================================")
+
+    sh(
+      "curl",
+      "--silent",
+      "--show-error",
+      "--fail",
+      "--location",
+      "--user",
+      "#{sauce_username}:#{sauce_access_key}",
+      "--request",
+      "GET",
+      verify_url,
+      "--output",
+      verify_file
+    )
+
+    verify_response = File.read(verify_file)
+
+    UI.message("========================================")
+    UI.message("Sauce Storage verification")
+    UI.message("========================================")
+    UI.message(verify_response)
+
+    unless verify_response.include?("myapp.apk")
       UI.user_error!(
-        "SAUCE_USERNAME and SAUCE_ACCESS_KEY must be configured"
+        "Upload request completed, but myapp.apk was not found in Sauce Storage."
       )
     end
 
-    UI.message("Uploading APK to Sauce Labs...")
-
-    # Upload APK to Sauce Labs Storage
-    sh(
-      "curl",
-      "--fail-with-body",
-      "--location",
-      "--user", "#{sauce_username}:#{sauce_access_key}",
-      "--request", "POST",
-      "https://api.eu-central-1.saucelabs.com/v1/storage/upload",
-      "--form", "payload=@#{apk_path}",
-      "--form", "name=myapp.apk"
-    )
-
-    UI.success("APK uploaded successfully to Sauce Labs as myapp.apk")
+    UI.success("========================================")
+    UI.success("APK successfully uploaded to Sauce Labs")
+    UI.success("Filename: myapp.apk")
+    UI.success("========================================")
   end
 
   desc "Build release APK"
